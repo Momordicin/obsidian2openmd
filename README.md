@@ -7,6 +7,8 @@ Convert obsidian markdown to formatted markdown for Fuwari-styled website.
 Remove local link, re-format checkbox format, etc.
 # Output  
 ![image](https://github.com/Momordicin/obsidian2openmd/blob/main/test/stylemarkdown.jpg)
+The newest 2 posts are produced by Obsidian2openmd.
+Welcome to [my blog](https://blog.laevatain.net/). 
 # Setting  
 ![image](https://github.com/Momordicin/obsidian2openmd/blob/main/test/test_example.jpg)  
 # On-going Feature  
