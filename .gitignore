@@ -5,3 +5,6 @@ tutorial.spec
 tutorial.exe
 obsidian2openmd.exe
 releases/
+__pycache__/
+*.pyc
+git_commands.txt
