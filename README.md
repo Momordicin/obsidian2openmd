@@ -34,9 +34,13 @@ Open `obsidian2openmd.exe` directly to launch the GUI.
 
 | 输入 Input | 效果 Output |
 |---|---|
-| `Opensource_`（默认，前缀）| `Opensource_filename.md` |
-| `_draft`（后缀，以 `_` 开头）| `filename_draft.md` |
+| `Opensource_`（如果输出文件夹为源文件夹, <br>且没有命名时, 自动默认前缀, ）| `Opensource_filename.md` |
+| `xxx_`（前缀，以 `_` 结尾）| `xxx_filename.md` |
+| `_yyy`（后缀，以 `_` 开头）| `filename_yyy.md` |
 | `output.md`（精确文件名）| `output.md` |
+
+### 设置fuwari post根目录  
+略, 方便默认输出目录设置, 仍可个性化修改  
 
 ### CLI 模式（拖拽）/ CLI Mode (Drag & Drop)
 
