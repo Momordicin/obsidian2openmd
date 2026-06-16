@@ -18,11 +18,19 @@ def _save_path():
     return os.path.join(base, 'tasklist.json')
 
 def load_tasks():
+    """Return {'output_root': str, 'tasks': [...]}.
+
+    Backward compatible with the old format where the file was a plain list.
+    """
     try:
         with open(_save_path(), 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return []
+        return {'output_root': '', 'tasks': []}
+    if isinstance(data, list):                      # legacy: bare task list
+        return {'output_root': '', 'tasks': data}
+    return {'output_root': data.get('output_root', ''),
+            'tasks':       data.get('tasks', [])}
 
 def save_tasks(data):
     try:
@@ -34,21 +42,42 @@ def save_tasks(data):
 
 # ── File processing ────────────────────────────────────────────────────────────
 
-def resolve_output_path(input_path, naming_rule):
-    if not naming_rule:
-        naming_rule = "Opensource_"
-    dir_part = os.path.dirname(input_path)
+def resolve_output_path(input_path, naming_rule, out_base=None, rel_path=None):
+    """Compute the output file path.
+
+    out_base : destination base directory for this task. When empty/None the
+               file is written beside its source (legacy behaviour).
+    rel_path : path of the source file relative to its folder root. Its
+               directory part is appended under out_base to preserve hierarchy.
+    """
     base     = os.path.basename(input_path)
     name, ext = os.path.splitext(base)
-    if naming_rule.endswith('_'):
-        out_name = naming_rule + base
-    elif naming_rule.startswith('_'):
-        out_name = name + naming_rule + ext
+
+    # Resolve the output directory first.
+    if out_base:
+        sub      = os.path.dirname(rel_path) if rel_path else ''
+        dir_part = os.path.join(out_base, sub)
     else:
-        out_name = naming_rule if '.' in naming_rule else naming_rule + ext
+        dir_part = os.path.dirname(input_path)
+
+    if not naming_rule:
+        # Empty rule → keep the original name, but only when that would NOT
+        # land on the source file itself (the user may have pointed the output
+        # at the source dir by mistake). Otherwise add Opensource_ to be safe.
+        candidate = os.path.join(dir_part, base)
+        overwrites_source = (os.path.normcase(os.path.abspath(candidate))
+                             == os.path.normcase(os.path.abspath(input_path)))
+        out_name = "Opensource_" + base if overwrites_source else base
+    elif naming_rule.endswith('_'):
+        out_name = naming_rule + base            # prefix
+    elif naming_rule.startswith('_'):
+        out_name = name + naming_rule + ext      # suffix
+    else:
+        out_name = naming_rule if '.' in naming_rule else naming_rule + ext  # exact filename
+
     return os.path.join(dir_part, out_name)
 
-def process_file(input_path, naming_rule, fuwari_meta=None):
+def process_file(input_path, naming_rule, fuwari_meta=None, out_base=None, rel_path=None):
     content = read_markdown_file(input_path)
     if content is None:
         return None, f"File not found: {input_path}"
@@ -62,8 +91,11 @@ def process_file(input_path, naming_rule, fuwari_meta=None):
         )
     else:
         content = preprocess_md(content)
-    out_path = resolve_output_path(input_path, naming_rule)
+    out_path = resolve_output_path(input_path, naming_rule, out_base, rel_path)
     try:
+        out_dir = os.path.dirname(out_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
         with open(out_path, 'w', encoding='utf-8') as f:
             f.write(content)
         return out_path, None
@@ -77,14 +109,15 @@ def process_file(input_path, naming_rule, fuwari_meta=None):
 #   #0  : Path / Name  (tree column, handles indentation)
 #   #1  : enabled      (☑ / ☒ / ☐)
 #   #2  : naming_rule
-#   #3  : status
+#   #3  : out_path     (destination base dir; only set on top-level rows)
+#   #4  : status
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Obsidian2OpenMD")
-        self.geometry("900x580")
-        self.minsize(700, 420)
+        self.geometry("960x600")
+        self.minsize(760, 440)
         self._set_icon()
         self._build()
         self._load_tasks()
@@ -134,7 +167,7 @@ class App(tk.Tk):
             tk.Entry(row, textvariable=var).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # Task tree — show='tree headings' enables hierarchical indentation
-        cols = ("enabled", "naming_rule", "status")
+        cols = ("enabled", "naming_rule", "out_path", "status")
         frame = tk.Frame(self)
         frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
 
@@ -143,12 +176,14 @@ class App(tk.Tk):
         self.tree.heading('#0',          text='Path / Name')
         self.tree.heading('enabled',     text='')
         self.tree.heading('naming_rule', text='Output Naming Rule')
+        self.tree.heading('out_path',    text='Output Path')
         self.tree.heading('status',      text='Status')
 
-        self.tree.column('#0',          width=340, stretch=True)
+        self.tree.column('#0',          width=320, stretch=True)
         self.tree.column('enabled',     width=30,  stretch=False, anchor='center')
-        self.tree.column('naming_rule', width=170, stretch=False)
-        self.tree.column('status',      width=190, stretch=False)
+        self.tree.column('naming_rule', width=150, stretch=False)
+        self.tree.column('out_path',    width=240, stretch=True)
+        self.tree.column('status',      width=160, stretch=False)
 
         self.tree.tag_configure('folder', background='#dde8f0', font=('', 9, 'bold'))
 
@@ -160,12 +195,31 @@ class App(tk.Tk):
         self.tree.bind('<Button-1>',  self._on_click)
         self.tree.bind('<Double-1>',  self._on_double_click)
 
+        # Output root bar
+        outf = tk.Frame(self, padx=8, pady=2)
+        outf.pack(fill=tk.X)
+        tk.Label(outf, text="Output root:").pack(side=tk.LEFT)
+        self.output_root_var = tk.StringVar(value="")
+        oe = tk.Entry(outf, textvariable=self.output_root_var)
+        oe.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4)
+        oe.bind("<Return>",   self._refresh_out_paths)
+        oe.bind("<FocusOut>", self._refresh_out_paths)
+        tk.Button(outf, text="Browse...", command=self._browse_output_root).pack(side=tk.LEFT, padx=2)
+        tk.Button(outf, text="Clear",     command=self._clear_output_root).pack(side=tk.LEFT)
+        tk.Label(outf, text="  (empty = output beside source)",
+                 fg="gray").pack(side=tk.LEFT, padx=4)
+
         # Default naming rule bar
         bot = tk.Frame(self, padx=8, pady=4)
         bot.pack(fill=tk.X)
         tk.Label(bot, text="Default naming rule:").pack(side=tk.LEFT)
-        self.default_rule_var = tk.StringVar(value="Opensource_")
-        tk.Entry(bot, textvariable=self.default_rule_var, width=20).pack(side=tk.LEFT, padx=4)
+        self.default_rule_var = tk.StringVar(value="")
+        self.rule_entry = tk.Entry(bot, textvariable=self.default_rule_var, width=34)
+        self.rule_entry.pack(side=tk.LEFT, padx=4)
+        self.rule_entry.bind("<FocusIn>",  self._rule_focus_in)
+        self.rule_entry.bind("<FocusOut>", self._rule_focus_out)
+        self._rule_is_placeholder = False
+        self._show_rule_placeholder()
         tk.Label(bot,
                  text="  Prefix ending '_'   |   Suffix starting '_'   |   Exact filename",
                  fg="gray").pack(side=tk.LEFT)
@@ -183,8 +237,30 @@ class App(tk.Tk):
 
     # ── Path helpers ──────────────────────────────────────────────────────────
 
+    # Placeholder shown in the Default naming rule entry while it is empty.
+    _RULE_PLACEHOLDER = "Opensource_ (默认输出文件前缀)"
+
     def _default_rule(self):
-        return self.default_rule_var.get() or "Opensource_"
+        # Empty entry → return "" and let resolve_output_path decide:
+        # output elsewhere → keep original name; beside source → Opensource_.
+        if self._rule_is_placeholder:
+            return ""
+        return self.default_rule_var.get()
+
+    def _show_rule_placeholder(self):
+        self._rule_is_placeholder = True
+        self.default_rule_var.set(self._RULE_PLACEHOLDER)
+        self.rule_entry.config(fg="gray")
+
+    def _rule_focus_in(self, _=None):
+        if self._rule_is_placeholder:
+            self._rule_is_placeholder = False
+            self.default_rule_var.set("")
+            self.rule_entry.config(fg="black")
+
+    def _rule_focus_out(self, _=None):
+        if not self.default_rule_var.get():
+            self._show_rule_placeholder()
 
     def _get_full_path(self, iid):
         """Reconstruct full path by joining from root down."""
@@ -197,6 +273,41 @@ class App(tk.Tk):
         # parts[0] is always the full path of the top-level item;
         # deeper parts are basenames → os.path.join handles correctly.
         return os.path.join(*parts)
+
+    def _top_ancestor(self, iid):
+        """Return the top-level ancestor iid of an item (or itself)."""
+        cur = iid
+        while self.tree.parent(cur):
+            cur = self.tree.parent(cur)
+        return cur
+
+    def _compute_out_path(self, path, is_folder):
+        """Auto output base path = <output_root>/<folder name> for folders,
+        or <output_root> for standalone files. Empty root → empty (beside source)."""
+        root = self.output_root_var.get().strip()
+        if not root:
+            return ''
+        if is_folder:
+            return os.path.join(root, os.path.basename(path.rstrip('\\/')))
+        return root
+
+    def _refresh_out_paths(self, *_):
+        """Recompute the Output Path of every top-level row from the current root.
+        Overwrites any manual per-task edits (by design)."""
+        for item in self.tree.get_children():
+            is_folder = 'folder' in self.tree.item(item, 'tags')
+            path      = self.tree.item(item, 'text')   # top-level text is full path
+            self.tree.set(item, "out_path", self._compute_out_path(path, is_folder))
+
+    def _browse_output_root(self):
+        d = filedialog.askdirectory(title="Select output root folder")
+        if d:
+            self.output_root_var.set(d)
+            self._refresh_out_paths()
+
+    def _clear_output_root(self):
+        self.output_root_var.set('')
+        self._refresh_out_paths()
 
     # ── Folder depth check ────────────────────────────────────────────────────
 
@@ -215,10 +326,15 @@ class App(tk.Tk):
         """Insert a folder row and recursively add subfolders and .md files."""
         if rule is None:
             rule = self._default_rule()
-        # Top-level: show full path; nested: show only folder name
-        display = path if parent_iid == '' else os.path.basename(path)
+        # Top-level: show full path + auto output path; nested: name only, no out_path
+        if parent_iid == '':
+            display  = path
+            out_path = self._compute_out_path(path, True)
+        else:
+            display  = os.path.basename(path)
+            out_path = ''
         iid = self.tree.insert(parent_iid, tk.END, text=display,
-                               values=(CHECK_ON, rule, ''),
+                               values=(CHECK_ON, rule, out_path, ''),
                                tags=('folder',), open=True)
         try:
             entries = sorted(os.listdir(path))
@@ -231,17 +347,20 @@ class App(tk.Tk):
                 self._insert_folder_recursive(entry_path, iid, rule)
             elif entry.endswith('.md'):
                 self.tree.insert(iid, tk.END, text=entry,
-                                 values=(CHECK_ON, rule, 'Pending'),
+                                 values=(CHECK_ON, rule, '', 'Pending'),
                                  tags=('file',))
         return iid
 
-    def _insert_standalone_row(self, path, rule=None, enabled=True, status="Pending"):
+    def _insert_standalone_row(self, path, rule=None, enabled=True,
+                               status="Pending", out_path=None):
         """Top-level file row (added via Add Files or loaded from session)."""
         if rule is None:
             rule = self._default_rule()
+        if out_path is None:
+            out_path = self._compute_out_path(path, False)
         check = CHECK_ON if enabled else CHECK_OFF
         self.tree.insert('', tk.END, text=path,
-                         values=(check, rule, status),
+                         values=(check, rule, out_path, status),
                          tags=('file',))
 
     # ── Add / Remove ──────────────────────────────────────────────────────────
@@ -338,29 +457,34 @@ class App(tk.Tk):
         if parent:
             self._update_folder_state(parent)
 
-    # ── In-place edit (naming_rule, column #2) ────────────────────────────────
+    # ── In-place edit (naming_rule #2 / out_path #3) ──────────────────────────
 
     def _on_double_click(self, event):
         if self.tree.identify("region", event.x, event.y) != "cell":
             return
-        if self.tree.identify_column(event.x) != "#2":   # naming_rule column
+        col = self.tree.identify_column(event.x)
+        if col not in ("#2", "#3"):
             return
         item = self.tree.identify_row(event.y)
         if not item:
             return
+        colname = "naming_rule" if col == "#2" else "out_path"
+        # Output Path is only meaningful on top-level rows
+        if colname == "out_path" and self.tree.parent(item):
+            return
 
-        x, y, w, h = self.tree.bbox(item, "#2")
-        entry_var = tk.StringVar(value=self.tree.set(item, "naming_rule"))
+        x, y, w, h = self.tree.bbox(item, col)
+        entry_var = tk.StringVar(value=self.tree.set(item, colname))
         entry = tk.Entry(self.tree, textvariable=entry_var)
         entry.place(x=x, y=y, width=w, height=h)
         entry.focus()
 
         def save(e=None):
-            new_rule = entry_var.get()
-            self.tree.set(item, "naming_rule", new_rule)
-            # Folder: propagate to all descendants
-            if 'folder' in self.tree.item(item, 'tags'):
-                self._propagate_rule(item, new_rule)
+            new_val = entry_var.get()
+            self.tree.set(item, colname, new_val)
+            # Naming rule propagates to all descendants of a folder
+            if colname == "naming_rule" and 'folder' in self.tree.item(item, 'tags'):
+                self._propagate_rule(item, new_val)
             entry.destroy()
 
         entry.bind("<Return>",   save)
@@ -411,9 +535,20 @@ class App(tk.Tk):
         for item in checked:
             self.tree.set(item, "status", "Processing…")
             self.update_idletasks()
-            input_path   = self._get_full_path(item)
-            naming_rule  = self.tree.set(item, "naming_rule")
-            out_path, err = process_file(input_path, naming_rule, fuwari_meta)
+            input_path  = self._get_full_path(item)
+            naming_rule = self.tree.set(item, "naming_rule")
+
+            # Resolve destination from the top-level ancestor's Output Path.
+            top      = self._top_ancestor(item)
+            out_base = self.tree.set(top, "out_path").strip() or None
+            if out_base and 'folder' in self.tree.item(top, 'tags'):
+                root_dir = self._get_full_path(top)
+                rel_path = os.path.relpath(input_path, root_dir)
+            else:
+                rel_path = None
+
+            out_path, err = process_file(input_path, naming_rule, fuwari_meta,
+                                         out_base, rel_path)
             if err:
                 self.tree.set(item, "status", f"Error: {err}")
                 errors += 1
@@ -436,26 +571,29 @@ class App(tk.Tk):
                 'type':     'folder',
                 'path':     path,
                 'rule':     self.tree.set(item, "naming_rule"),
+                'out_path': self.tree.set(item, "out_path"),
                 'children': [self._serialise_item(c)
                              for c in self.tree.get_children(item)],
             }
         return {
-            'type':    'file',
-            'path':    path,
-            'rule':    self.tree.set(item, "naming_rule"),
-            'enabled': self.tree.set(item, "enabled") == CHECK_ON,
-            'status':  self.tree.set(item, "status"),
+            'type':     'file',
+            'path':     path,
+            'rule':     self.tree.set(item, "naming_rule"),
+            'out_path': self.tree.set(item, "out_path"),
+            'enabled':  self.tree.set(item, "enabled") == CHECK_ON,
+            'status':   self.tree.set(item, "status"),
         }
 
     def _load_item(self, task, parent_iid=''):
         """Recursively restore a tree item from a saved dict."""
-        path    = task['path']
-        display = path if parent_iid == '' else os.path.basename(path)
-        rule    = task.get('rule', 'Opensource_')
+        path     = task['path']
+        display  = path if parent_iid == '' else os.path.basename(path)
+        rule     = task.get('rule', 'Opensource_')
+        out_path = task.get('out_path', '')
 
         if task.get('type') == 'folder':
             iid = self.tree.insert(parent_iid, tk.END, text=display,
-                                   values=(CHECK_ON, rule, ''),
+                                   values=(CHECK_ON, rule, out_path, ''),
                                    tags=('folder',), open=True)
             for child in task.get('children', []):
                 self._load_item(child, iid)
@@ -463,15 +601,20 @@ class App(tk.Tk):
         else:
             check = CHECK_ON if task.get('enabled', True) else CHECK_OFF
             self.tree.insert(parent_iid, tk.END, text=display,
-                             values=(check, rule, task.get('status', 'Pending')),
+                             values=(check, rule, out_path, task.get('status', 'Pending')),
                              tags=('file',))
 
     def _load_tasks(self):
-        for task in load_tasks():
+        data = load_tasks()
+        self.output_root_var.set(data.get('output_root', ''))
+        for task in data.get('tasks', []):
             self._load_item(task)
 
     def _save_current_tasks(self):
-        save_tasks([self._serialise_item(i) for i in self.tree.get_children()])
+        save_tasks({
+            'output_root': self.output_root_var.get(),
+            'tasks':       [self._serialise_item(i) for i in self.tree.get_children()],
+        })
 
     def _on_close(self):
         self._save_current_tasks()

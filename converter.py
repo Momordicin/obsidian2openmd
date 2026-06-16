@@ -11,7 +11,40 @@ def read_markdown_file(file_path):
         print(f"Error: The file '{file_path}' was not found.")
 
 
+def convert_frontmatter_tags(md_file):
+    """Convert Obsidian block-style tags in the YAML frontmatter to Fuwari's
+    inline list.
+
+        tags:              ->   tags: [Reading, Foo]
+          - Reading
+          - Foo
+
+    No-op when there is no leading frontmatter, no block-style tags, or the
+    tags are already inline.
+    """
+    # Frontmatter must be the very first block: --- ... ---
+    m = re.match(r'^---[ \t]*\r?\n(.*?\r?\n)---[ \t]*(?:\r?\n|$)', md_file, re.DOTALL)
+    if not m:
+        return md_file
+    fm = m.group(1)   # frontmatter body, between the --- fences
+
+    def repl(match):
+        items = re.findall(r'^[ \t]*-[ \t]*(.+?)[ \t]*$',
+                           match.group(1), re.MULTILINE)
+        items = [i for i in items if i]
+        return f'tags: [{", ".join(items)}]\n'
+
+    new_fm = re.sub(r'^tags:[ \t]*\r?\n((?:[ \t]*-[ \t]*.+\r?\n?)+)',
+                    repl, fm, flags=re.MULTILINE)
+    if new_fm == fm:
+        return md_file
+    return md_file[:m.start(1)] + new_fm + md_file[m.end(1):]
+
+
 def preprocess_md(md_file):
+    # Normalise Obsidian block-style frontmatter tags to Fuwari's inline list
+    md_file = convert_frontmatter_tags(md_file)
+
     # Remove all [[]] links but remain the text inside
     md_file = re.sub(r'\[\[(.*?)\]\]\([^\)]+\)', r'\1', md_file)
     md_file = re.sub(r'\[\[(.*?)\]\]', r'\1', md_file)
