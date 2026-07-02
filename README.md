@@ -48,6 +48,10 @@ Open `obsidian2openmd.exe` directly to launch the GUI.
 Drag and drop a `.md` file onto the exe to generate an `Opensource_`-prefixed copy, same as previous versions.
 
 ---
+## UI 使用实例
+![image](https://github.com/Momordicin/obsidian2openmd/blob/main/test/uiexample.jpg)
+
+---
 
 ## Output 输出示例
 
