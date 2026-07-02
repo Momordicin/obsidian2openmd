@@ -49,7 +49,7 @@ Drag and drop a `.md` file onto the exe to generate an `Opensource_`-prefixed co
 
 ---
 ## UI 使用实例
-![image](https://github.com/Momordicin/obsidian2openmd/blob/main/test/uiexample.jpg)
+![image](https://github.com/Momordicin/obsidian2openmd/blob/main/test/uiexample.png)
 
 ---
 
