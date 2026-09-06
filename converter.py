@@ -31,8 +31,11 @@ def convert_frontmatter_tags(md_file):
     def repl(match):
         items = re.findall(r'^[ \t]*-[ \t]*(.+?)[ \t]*$',
                            match.group(1), re.MULTILINE)
-        items = [i for i in items if i]
-        return f'tags: [{", ".join(items)}]\n'
+        # '.' also matches '\r', so CRLF files leave a stray CR inside each
+        # item, which breaks YAML parsing of the inline list — strip it.
+        items = [i.strip() for i in items if i.strip()]
+        eol = '\r\n' if '\r\n' in match.group(1) else '\n'
+        return f'tags: [{", ".join(items)}]{eol}'
 
     new_fm = re.sub(r'^tags:[ \t]*\r?\n((?:[ \t]*-[ \t]*.+\r?\n?)+)',
                     repl, fm, flags=re.MULTILINE)
