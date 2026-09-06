@@ -31,14 +31,45 @@ def convert_frontmatter_tags(md_file):
     def repl(match):
         items = re.findall(r'^[ \t]*-[ \t]*(.+?)[ \t]*$',
                            match.group(1), re.MULTILINE)
-        items = [i for i in items if i]
-        return f'tags: [{", ".join(items)}]\n'
+        # '.' also matches '\r', so CRLF files leave a stray CR inside each
+        # item, which breaks YAML parsing of the inline list — strip it.
+        items = [i.strip() for i in items if i.strip()]
+        eol = '\r\n' if '\r\n' in match.group(1) else '\n'
+        return f'tags: [{", ".join(items)}]{eol}'
 
     new_fm = re.sub(r'^tags:[ \t]*\r?\n((?:[ \t]*-[ \t]*.+\r?\n?)+)',
                     repl, fm, flags=re.MULTILINE)
     if new_fm == fm:
         return md_file
     return md_file[:m.start(1)] + new_fm + md_file[m.end(1):]
+
+
+def _hard_line_breaks(md_file):
+    """Append two trailing spaces to line endings so single newlines survive
+    as markdown hard breaks.
+
+    Lines already ending with two spaces are left untouched. Fenced code
+    blocks (``` or ~~~) are kept verbatim: adding trailing spaces there
+    corrupts the code. Each line keeps its own LF/CRLF ending — appending
+    the spaces before the original ending (not replacing '\n' with '  \n')
+    is what keeps CRLF files from breaking.
+    """
+    lines = md_file.splitlines(keepends=True)
+    out = []
+    fence = None   # opening fence marker while inside a fenced code block
+    for line in lines:
+        body = line.rstrip('\r\n')
+        eol = line[len(body):]
+        stripped = body.lstrip()
+        if fence is None:
+            if stripped.startswith('```') or stripped.startswith('~~~'):
+                fence = stripped[:3]
+            elif not body.endswith('  '):
+                line = body + '  ' + eol
+        elif stripped.startswith(fence):
+            fence = None
+        out.append(line)
+    return ''.join(out)
 
 
 def preprocess_md(md_file):
@@ -57,7 +88,7 @@ def preprocess_md(md_file):
     md_file = re.sub(r'\[([^\]]+)\]\((?!https?:\/\/)([^\)]+)\)', r'\1', md_file)
 
     # replace single newlines with double newlines except for lines ending with two spaces
-    md_file = re.sub(r'(?<!  )\n', '  \n', md_file)
+    md_file = _hard_line_breaks(md_file)
     return md_file
 
 
@@ -85,5 +116,5 @@ draft: false
     md_file = re.sub(r'\[([^\]]+)\]\((?!https?:\/\/)([^\)]+)\)', r'\1', md_file)
 
     # replace single newlines with double newlines except for lines ending with two spaces
-    md_file = re.sub(r'(?<!  )\n', '  \n', md_file)
+    md_file = _hard_line_breaks(md_file)
     return md_file
