@@ -44,6 +44,34 @@ def convert_frontmatter_tags(md_file):
     return md_file[:m.start(1)] + new_fm + md_file[m.end(1):]
 
 
+def _hard_line_breaks(md_file):
+    """Append two trailing spaces to line endings so single newlines survive
+    as markdown hard breaks.
+
+    Lines already ending with two spaces are left untouched. Fenced code
+    blocks (``` or ~~~) are kept verbatim: adding trailing spaces there
+    corrupts the code. Each line keeps its own LF/CRLF ending — appending
+    the spaces before the original ending (not replacing '\n' with '  \n')
+    is what keeps CRLF files from breaking.
+    """
+    lines = md_file.splitlines(keepends=True)
+    out = []
+    fence = None   # opening fence marker while inside a fenced code block
+    for line in lines:
+        body = line.rstrip('\r\n')
+        eol = line[len(body):]
+        stripped = body.lstrip()
+        if fence is None:
+            if stripped.startswith('```') or stripped.startswith('~~~'):
+                fence = stripped[:3]
+            elif not body.endswith('  '):
+                line = body + '  ' + eol
+        elif stripped.startswith(fence):
+            fence = None
+        out.append(line)
+    return ''.join(out)
+
+
 def preprocess_md(md_file):
     # Normalise Obsidian block-style frontmatter tags to Fuwari's inline list
     md_file = convert_frontmatter_tags(md_file)
@@ -60,7 +88,7 @@ def preprocess_md(md_file):
     md_file = re.sub(r'\[([^\]]+)\]\((?!https?:\/\/)([^\)]+)\)', r'\1', md_file)
 
     # replace single newlines with double newlines except for lines ending with two spaces
-    md_file = re.sub(r'(?<!  )\n', '  \n', md_file)
+    md_file = _hard_line_breaks(md_file)
     return md_file
 
 
@@ -88,5 +116,5 @@ draft: false
     md_file = re.sub(r'\[([^\]]+)\]\((?!https?:\/\/)([^\)]+)\)', r'\1', md_file)
 
     # replace single newlines with double newlines except for lines ending with two spaces
-    md_file = re.sub(r'(?<!  )\n', '  \n', md_file)
+    md_file = _hard_line_breaks(md_file)
     return md_file
