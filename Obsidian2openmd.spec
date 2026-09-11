@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['main_ui.py'],
+    ['ui.py'],
     pathex=[],
     binaries=[],
-    datas=[('res/icon_app.ico', 'res')],
+    datas=[('res\\icon_app.ico', 'res')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='main_ui',
+    name='Obsidian2openmd',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
